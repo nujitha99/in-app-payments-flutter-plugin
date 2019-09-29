@@ -1,5 +1,8 @@
 # Flutter plugin for In-App Payments SDK
 
+[![Build Status](https://travis-ci.com/square/in-app-payments-flutter-plugin.svg?branch=master)](https://travis-ci.com/square/in-app-payments-flutter-plugin)
+[![Pub](https://img.shields.io/pub/v/square_in_app_payments)](https://pub.dev/packages/square_in_app_payments)
+
 The Flutter plugin for Square [In-App Payments SDK] is a wrapper for the native Android and iOS SDKs and 
 supports the following native In-App Payments SDK versions:
 
@@ -40,8 +43,6 @@ In addition to this README, the following is available in the [flutter plugin Gi
 
 * In-App Payments SDK cannot issue refunds. Refunds can be issued programmatically using
   the Transactions API or manually in the [Square Dashboard].
-* In-App Payments SDK is not supported in the Square sandbox. See [Testing Mobile Apps]
-  for testing recommendations.
 
 ## Sample applications
 * **[Quick start flutter app]:** You can learn how the In-App-Payments Flutter plugin is used by [getting started with the example app], a quick-start Flutter app that lets you take a payment after completing 6 set up steps. 
