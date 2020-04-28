@@ -14,6 +14,7 @@
  limitations under the License.
 */
 import 'dart:async';
+import 'package:built_collection/built_collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
@@ -40,7 +41,6 @@ class BuySheet extends StatefulWidget {
   static final GlobalKey<ScaffoldState> scaffoldKey =
       GlobalKey<ScaffoldState>();
 
-
   BuySheet(
       {this.applePayEnabled,
       this.googlePayEnabled,
@@ -64,11 +64,18 @@ class BuySheetState extends State<BuySheet> {
     var selection =
         await custom_modal_bottom_sheet.showModalBottomSheet<PaymentType>(
             context: BuySheet.scaffoldKey.currentState.context,
-            builder: (context) => OrderSheet(applePayEnabled: widget.applePayEnabled, googlePayEnabled: widget.googlePayEnabled,));
+            builder: (context) => OrderSheet(
+                  applePayEnabled: widget.applePayEnabled,
+                  googlePayEnabled: widget.googlePayEnabled,
+                ));
 
     switch (selection) {
       case PaymentType.cardPayment:
+        // call _onStartCardEntryFlow to start Card Entry without buyer verification (SCA)
         await _onStartCardEntryFlow();
+        // OR call _onStartCardEntryFlowWithBuyerVerification to start Card Entry with buyer verification (SCA)
+        // NOTE this requires _squareLocationSet to be set
+        // await _onStartCardEntryFlowWithBuyerVerification();
         break;
       case PaymentType.googlePay:
         if (_squareLocationSet && widget.googlePayEnabled) {
@@ -87,33 +94,56 @@ class BuySheetState extends State<BuySheet> {
     }
   }
 
-  void printCurlCommand(String nonce) {
+  void printCurlCommand(String nonce, String verificationToken) {
     var hostUrl = 'https://connect.squareup.com';
     if (squareApplicationId.startsWith('sandbox')) {
       hostUrl = 'https://connect.squareupsandbox.com';
     }
     var uuid = Uuid().v4();
-    print(
-        'curl --request POST $hostUrl/v2/locations/SQUARE_LOCATION_ID/transactions \\'
-        '--header \"Content-Type: application/json\" \\'
-        '--header \"Authorization: Bearer YOUR_ACCESS_TOKEN\" \\'
-        '--header \"Accept: application/json\" \\'
-        '--data \'{'
-        '\"idempotency_key\": \"$uuid\",'
-        '\"amount_money\": {'
-        '\"amount\": $cookieAmount,'
-        '\"currency\": \"USD\"},'
-        '\"card_nonce\": \"$nonce\"'
-        '}\'');
+
+    if (verificationToken == null) {
+      print(
+          'curl --request POST $hostUrl/v2/locations/SQUARE_LOCATION_ID/transactions \\'
+          '--header \"Content-Type: application/json\" \\'
+          '--header \"Authorization: Bearer YOUR_ACCESS_TOKEN\" \\'
+          '--header \"Accept: application/json\" \\'
+          '--data \'{'
+          '\"idempotency_key\": \"$uuid\",'
+          '\"amount_money\": {'
+          '\"amount\": $cookieAmount,'
+          '\"currency\": \"USD\"},'
+          '\"card_nonce\": \"$nonce\"'
+          '}\'');
+    } else {
+      print('curl --request POST $hostUrl/v2/payments \\'
+          '--header \"Content-Type: application/json\" \\'
+          '--header \"Authorization: Bearer YOUR_ACCESS_TOKEN\" \\'
+          '--header \"Accept: application/json\" \\'
+          '--data \'{'
+          '\"idempotency_key\": \"$uuid\",'
+          '\"amount_money\": {'
+          '\"amount\": $cookieAmount,'
+          '\"currency\": \"USD\"},'
+          '\"source_id\": \"$nonce\",'
+          '\"verification_token\": \"$verificationToken\"'
+          '}\'');
+    }
   }
 
-  void _showUrlNotSetAndPrintCurlCommand(String nonce) {
+  void _showUrlNotSetAndPrintCurlCommand(String nonce,
+      {String verificationToken}) {
+    String title;
+    if (verificationToken != null) {
+      title = "Nonce and verification token generated but not charged";
+    } else {
+      title = "Nonce generated but not charged";
+    }
     showAlertDialog(
         context: BuySheet.scaffoldKey.currentContext,
-        title: "Nonce generated but not charged",
+        title: title,
         description:
             "Check your console for a CURL command to charge the nonce, or replace CHARGE_SERVER_HOST with your server host.");
-    printCurlCommand(nonce);
+    printCurlCommand(nonce, verificationToken);
   }
 
   void _showSquareLocationIdNotSet() {
@@ -146,7 +176,6 @@ class BuySheetState extends State<BuySheet> {
     if (!_chargeServerHostReplaced) {
       InAppPayments.completeCardEntry(
           onCardEntryComplete: _onCardEntryComplete);
-
       _showUrlNotSetAndPrintCurlCommand(result.nonce);
       return;
     }
@@ -163,6 +192,33 @@ class BuySheetState extends State<BuySheet> {
     await InAppPayments.startCardEntryFlow(
         onCardNonceRequestSuccess: _onCardEntryCardNonceRequestSuccess,
         onCardEntryCancel: _onCancelCardEntryFlow,
+        collectPostalCode: true);
+  }
+
+  Future<void> _onStartCardEntryFlowWithBuyerVerification() async {
+    var money = Money((b) => b
+      ..amount = 100
+      ..currencyCode = 'USD');
+
+    var contact = Contact((b) => b
+      ..givenName = "John"
+      ..familyName = "Doe"
+      ..addressLines =
+          new BuiltList<String>(["London Eye", "Riverside Walk"]).toBuilder()
+      ..city = "London"
+      ..countryCode = "GB"
+      ..email = "johndoe@example.com"
+      ..phone = "8001234567"
+      ..postalCode = "SE1 7");
+
+    await InAppPayments.startCardEntryFlowWithBuyerVerification(
+        onBuyerVerificationSuccess: _onBuyerVerificationSuccess,
+        onBuyerVerificationFailure: _onBuyerVerificationFailure,
+        onCardEntryCancel: _onCancelCardEntryFlow,
+        buyerAction: "Charge",
+        money: money,
+        squareLocationId: squareLocationId,
+        contact: contact,
         collectPostalCode: true);
   }
 
@@ -268,9 +324,9 @@ class BuySheetState extends State<BuySheet> {
     await InAppPayments.completeApplePayAuthorization(
         isSuccess: false, errorMessage: errorInfo.message);
     showAlertDialog(
-          context: BuySheet.scaffoldKey.currentContext,
-          title: "Error request ApplePay nonce",
-          description: errorInfo.toString());
+        context: BuySheet.scaffoldKey.currentContext,
+        title: "Error request ApplePay nonce",
+        description: errorInfo.toString());
   }
 
   void _onApplePayEntryComplete() {
@@ -280,6 +336,30 @@ class BuySheetState extends State<BuySheet> {
     }
   }
 
+  void _onBuyerVerificationSuccess(BuyerVerificationDetails result) async {
+    if (!_chargeServerHostReplaced) {
+      _showUrlNotSetAndPrintCurlCommand(result.nonce,
+          verificationToken: result.token);
+      return;
+    }
+
+    try {
+      await chargeCardAfterBuyerVerification(result);
+    } on ChargeException catch (ex) {
+      showAlertDialog(
+          context: BuySheet.scaffoldKey.currentContext,
+          title: "Error processing card payment",
+          description: ex.errorMessage);
+    }
+  }
+
+  void _onBuyerVerificationFailure(ErrorInfo errorInfo) async {
+    showAlertDialog(
+        context: BuySheet.scaffoldKey.currentContext,
+        title: "Error verifying buyer",
+        description: errorInfo.toString());
+  }
+
   Widget build(BuildContext context) => MaterialApp(
         theme: ThemeData(canvasColor: Colors.transparent),
         home: Scaffold(
@@ -287,37 +367,36 @@ class BuySheetState extends State<BuySheet> {
           key: BuySheet.scaffoldKey,
           body: Builder(
             builder: (context) => Center(
-                    child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      child: Image(image: AssetImage("assets/iconCookie.png")),
+                child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  child: Image(image: AssetImage("assets/iconCookie.png")),
+                ),
+                Container(
+                  child: Text(
+                    'Super Cookie',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 28,
                     ),
-                    Container(
-                      child: Text(
-                        'Super Cookie',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 28,
-                        ),
-                      ),
+                  ),
+                ),
+                Container(
+                  child: Text(
+                    "Instantly gain special powers \nwhen ordering a super cookie",
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
                     ),
-                    Container(
-                      child: Text(
-                        "Instantly gain special powers \nwhen ordering a super cookie",
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                        ),
-                      ),
-                    ),
-                    Container(
-                      margin: EdgeInsets.only(top: 32),
-                      child:
-                          CookieButton(text: "Buy", onPressed: _showOrderSheet),
-                    ),
-                  ],
-                )),
+                  ),
+                ),
+                Container(
+                  margin: EdgeInsets.only(top: 32),
+                  child: CookieButton(text: "Buy", onPressed: _showOrderSheet),
+                ),
+              ],
+            )),
           ),
         ),
       );
